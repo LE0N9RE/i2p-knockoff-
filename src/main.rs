@@ -1,5 +1,6 @@
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 fn node() {
     let args: Vec<String> = std::env::args().collect();
@@ -8,49 +9,38 @@ fn node() {
     println!("Starting node on: {}", addr);
     let riv = TcpListener::bind(addr).unwrap();
 
-    struct I2Ppacket {
-        destination_port: String,
-        message: String,
-    }
-
-    let packet = I2Ppacket {
-        destination_port: String::from("9002"),
-        message: String::from("hello from node 9001"),
-    };
-
-    // ONE SINGLE LOOP TO RULE THEM ALL
+    let mut phonebook: Vec<String> = Vec::new();
     for stream in riv.incoming() {
         let mut stream = stream.unwrap();
-        println!("Connection established on port {}!", chosen_port);
 
-        // 1. Reply back to whoever connected to us just to be nice
-        let message_to_send = &packet.message;
-        let _ = stream.write_all(message_to_send.as_bytes());
-        println!("Sent packet message to the client!");
+        // 2. Read what port they are calling from
+        let mut buffer = [0; 128];
+        let bytes_read = stream.read(&mut buffer).unwrap();
+        let incoming_node_port = String::from_utf8_lossy(&buffer[..bytes_read]).to_string();
 
-        // 2. Parse our port to math it out
-        let current_port_num: u16 = chosen_port.parse().unwrap();
+        // 3. Store it in a vector if it's a new port
+        if !phonebook.contains(&incoming_node_port) && phonebook.len() < 5 {
+            phonebook.push(incoming_node_port.clone());
+        }
 
-        // 3. Chain reaction: if we aren't at 9004, forward to the next one!
-        if current_port_num < 9004 {
-            let next_port_num = current_port_num + 1;
-            let next_addr = format!("127.0.0.1:{}", next_port_num);
+        // 4. mark of 5 store the node
+        if phonebook.len() == 5 {
+            // 5. Run the random index selector over the vector
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let random_index = (nanos % phonebook.len() as u128) as usize;
+            let chosen_target_port = &phonebook[random_index];
 
-            println!("Forwarding packet automatically to next hop: {}", next_addr);
+            let target_addr = format!("127.0.0.1:{}", chosen_target_port);
 
-            if let Ok(mut next_node) = TcpStream::connect(&next_addr) {
-                next_node.write_all(packet.message.as_bytes()).unwrap();
-            } else {
-                println!(
-                    "Failed to connect to next hop {} - is it running?",
-                    next_addr
-                );
-            }
-        } else {
-            println!(
-                "We are the exit node (9004)! Packet destination reached: {}",
-                packet.message
-            );
+            // 6. Execute the jump using TcpStream
+            if let Ok(mut leap_stream) = TcpStream::connect(&target_addr) {
+                // Tell the next node who we are so it can store US in its vector!
+                let _ = leap_stream.write_all(chosen_port.as_bytes());
+            // Break the loop or clear the phonebook to start over!
+            break;
         }
     }
 }
